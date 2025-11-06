@@ -1,0 +1,311 @@
+% --- %%% START OF MAIN SCRIPT %%% ---
+clear; clc; close all;
+fprintf('Starting ESE Project Simulation...\n');
+
+% --- Set Parameters ---
+D = 10;               % Number of dimensions (you can change this)
+N_PARTICLES = 30;     % Number of particles
+MAX_ITER = 100;       % Max iterations
+
+% PSO Hyperparameters
+W = 0.729;    % Inertia
+C1 = 1.49;    % Cognitive
+C2 = 1.49;    % Social
+
+% Hybrid PSO Hyperparameters
+MUTATION_RATE = 0.02;       % 10% chance to mutate
+MUTATION_STRENGTH = 0.01;   % Mutation strength (relative to bounds)
+
+% --- Define Function List ---
+% We use a cell array to store function handles and their properties
+functions_to_test = {
+    % Unimodal Functions
+    @sphere_function, 'Sphere', 'Unimodal', -10, 10;
+    @rosenbrock_function, 'Rosenbrock', 'Unimodal', -10, 10;
+    @step_function, 'Step', 'Unimodal', -10, 10;
+    @quartic_function, 'Quartic', 'Unimodal', -1.28, 1.28;
+    @schwefel_2_21_function, 'Schwefel 2.21', 'Unimodal', -10, 10;
+    
+    % Multimodal Functions
+    @rastrigin_function, 'Rastrigin', 'Multimodal', -5.12, 5.12;
+    @ackley_function, 'Ackley', 'Multimodal', -32.768, 32.768;
+    @griewank_function, 'Griewank', 'Multimodal', -600, 600;
+    @schwefel_function, 'Schwefel', 'Multimodal', -500, 500;
+    @levy_function, 'Levy', 'Multimodal', -10, 10
+};
+
+num_functions = size(functions_to_test, 1);
+total_runs = num_functions * 2; % 2 algorithms per function
+
+% --- Arrays to store results for the matrix ---
+Results_Function = cell(total_runs, 1);
+Results_Type = cell(total_runs, 1);
+Results_Algorithm = cell(total_runs, 1);
+Results_Fitness = zeros(total_runs, 1);
+Results_Dimensions = ones(total_runs, 1) * D;
+
+% --- Main Execution Loop ---
+fprintf('Running simulations for %d functions...\n', num_functions);
+result_index = 1;
+
+for i = 1:num_functions
+    % Get function details
+    obj_func = functions_to_test{i, 1};
+    func_name = functions_to_test{i, 2};
+    func_type = functions_to_test{i, 3};
+    min_b = functions_to_test{i, 4};
+    max_b = functions_to_test{i, 5};
+    
+    fprintf('Testing Function (%d/%d): %s\n', i, num_functions, func_name);
+
+    % --- 1. Run Standard PSO ---
+    [~, std_fitness, std_history] = pso(obj_func, min_b, max_b, N_PARTICLES, D, MAX_ITER, W, C1, C2);
+    
+    % Store results
+    Results_Function{result_index} = func_name;
+    Results_Type{result_index} = func_type;
+    Results_Algorithm{result_index} = 'Standard PSO';
+    Results_Fitness(result_index) = std_fitness;
+    result_index = result_index + 1;
+
+    % --- 2. Run Hybrid PSO ---
+    % Scale mutation strength to the bounds of the problem
+    current_mutation_strength = MUTATION_STRENGTH * (max_b - min_b);
+    
+    [~, hyb_fitness, hyb_history] = hybrid_pso(obj_func, min_b, max_b, N_PARTICLES, D, MAX_ITER, W, C1, C2, MUTATION_RATE, current_mutation_strength);
+    
+    % Store results
+    Results_Function{result_index} = func_name;
+    Results_Type{result_index} = func_type;
+    Results_Algorithm{result_index} = 'Hybrid PSO';
+    Results_Fitness(result_index) = hyb_fitness;
+    result_index = result_index + 1;
+
+    % --- 3. Generate GRAPH for this function ---
+    figure; % Create a new figure window for each graph
+    plot(1:MAX_ITER, std_history, 'b-', 'LineWidth', 2, 'DisplayName', 'Standard PSO');
+    hold on;
+    plot(1:MAX_ITER, hyb_history, 'r--', 'LineWidth', 2, 'DisplayName', 'Hybrid PSO');
+    title(sprintf('Convergence: %s Function (D=%d)', func_name, D));
+    xlabel('Iteration');
+    ylabel('Best Fitness (gbest)');
+    legend('show', 'Location', 'best');
+    grid on;
+    hold off;
+end
+
+% --- Generate the Results MATRIX (Table) ---
+fprintf('\n--- Final Results Matrix (Summary Table) ---\n');
+
+% Create the table from our results
+results_matrix = table(Results_Function, Results_Type, Results_Algorithm, Results_Fitness, Results_Dimensions);
+
+% Display the table
+disp(results_matrix);
+
+fprintf('\nESE Project simulation complete. All graphs and the final matrix have been generated.\n');
+
+
+% --- %%% END OF MAIN SCRIPT %%% ---
+%
+%
+%
+% --- %%% LOCAL FUNCTIONS START HERE %%% ---
+%
+% The main script above can call these functions
+% because they are in the same file.
+
+% --- Algorithm 1: Standard PSO ---
+function [gbest_pos, gbest_fitness, convergence_history] = pso(objective_func, min_bound, max_bound, num_particles, num_dimensions, max_iterations, w, c1, c2)
+    
+    % --- Initialization ---
+    particles_pos = min_bound + (max_bound - min_bound) .* rand(num_particles, num_dimensions);
+    particles_vel = rand(num_particles, num_dimensions);
+    pbest_pos = particles_pos;
+    
+    pbest_fitness = zeros(num_particles, 1);
+    for i = 1:num_particles
+        pbest_fitness(i) = objective_func(particles_pos(i, :));
+    end
+    
+    [min_fitness, min_index] = min(pbest_fitness);
+    gbest_fitness = min_fitness;
+    gbest_pos = pbest_pos(min_index, :);
+    
+    convergence_history = zeros(max_iterations, 1);
+
+    % --- PSO Main Loop ---
+    for iter = 1:max_iterations
+        convergence_history(iter) = gbest_fitness; % Store gbest fitness
+        
+        for i = 1:num_particles
+            % --- Update Velocity ---
+            r1 = rand(1, num_dimensions);
+            r2 = rand(1, num_dimensions);
+            
+            cognitive_velocity = c1 * r1 .* (pbest_pos(i, :) - particles_pos(i, :));
+            social_velocity = c2 * r2 .* (gbest_pos - particles_pos(i, :));
+            
+            particles_vel(i, :) = (w * particles_vel(i, :)) + cognitive_velocity + social_velocity;
+            
+            % --- Update Position ---
+            particles_pos(i, :) = particles_pos(i, :) + particles_vel(i, :);
+            
+            % --- Apply Bounds (Clamping) ---
+            particles_pos(i, :) = max(particles_pos(i, :), min_bound);
+            particles_pos(i, :) = min(particles_pos(i, :), max_bound);
+            
+            % --- Update PBest and GBest ---
+            current_fitness = objective_func(particles_pos(i, :));
+            
+            if current_fitness < pbest_fitness(i)
+                pbest_fitness(i) = current_fitness;
+                pbest_pos(i, :) = particles_pos(i, :);
+                
+                if current_fitness < gbest_fitness
+                    gbest_fitness = current_fitness;
+                    gbest_pos = particles_pos(i, :);
+                end
+            end
+        end
+    end
+end
+
+% --- Algorithm 2: Hybrid PSO (with Mutation) ---
+function [gbest_pos, gbest_fitness, convergence_history] = hybrid_pso(objective_func, min_bound, max_bound, num_particles, num_dimensions, max_iterations, w, c1, c2, mutation_rate, mutation_strength)
+
+    % --- Initialization ---
+    particles_pos = min_bound + (max_bound - min_bound) .* rand(num_particles, num_dimensions);
+    particles_vel = rand(num_particles, num_dimensions);
+    pbest_pos = particles_pos;
+    
+    pbest_fitness = zeros(num_particles, 1);
+    for i = 1:num_particles
+        pbest_fitness(i) = objective_func(particles_pos(i, :));
+    end
+    
+    [min_fitness, min_index] = min(pbest_fitness);
+    gbest_fitness = min_fitness;
+    gbest_pos = pbest_pos(min_index, :);
+    
+    convergence_history = zeros(max_iterations, 1);
+
+    % --- HPSO Main Loop ---
+    for iter = 1:max_iterations
+        convergence_history(iter) = gbest_fitness;
+        
+        for i = 1:num_particles
+            % --- Update Velocity & Position (Standard PSO) ---
+            r1 = rand(1, num_dimensions);
+            r2 = rand(1, num_dimensions);
+            cognitive_velocity = c1 * r1 .* (pbest_pos(i, :) - particles_pos(i, :));
+            social_velocity = c2 * r2 .* (gbest_pos - particles_pos(i, :));
+            particles_vel(i, :) = (w * particles_vel(i, :)) + cognitive_velocity + social_velocity;
+            particles_pos(i, :) = particles_pos(i, :) + particles_vel(i, :);
+            
+            % --- Apply Bounds ---
+            particles_pos(i, :) = max(particles_pos(i, :), min_bound);
+            particles_pos(i, :) = min(particles_pos(i, :), max_bound);
+            
+            % --- ### HYBRIDIZATION: MUTATION STEP ### ---
+            if rand() < mutation_rate
+                % Add a random value (Gaussian or uniform)
+                mutation_vector = -mutation_strength + (2 * mutation_strength) * rand(1, num_dimensions);
+                particles_pos(i, :) = particles_pos(i, :) + mutation_vector;
+                
+                % Re-apply bounds after mutation
+                particles_pos(i, :) = max(particles_pos(i, :), min_bound);
+                particles_pos(i, :) = min(particles_pos(i, :), max_bound);
+            end
+            % --- ### END OF HYBRID STEP ### ---
+
+            % --- Update PBest and GBest ---
+            current_fitness = objective_func(particles_pos(i, :));
+            if current_fitness < pbest_fitness(i)
+                pbest_fitness(i) = current_fitness;
+                pbest_pos(i, :) = particles_pos(i, :);
+                if current_fitness < gbest_fitness
+                    gbest_fitness = current_fitness;
+                    gbest_pos = particles_pos(i, :);
+                end
+            end
+        end
+    end
+end
+
+
+% --- %%% TEST FUNCTIONS (BENCHMARKS) %%% ---
+
+% --- 1. Sphere Function (Unimodal) ---
+% Global minimum: 0 at x = (0, 0, ..., 0)
+function f = sphere_function(x)
+    f = sum(x.^2);
+end
+
+% --- 2. Rosenbrock Function (Unimodal) ---
+% Global minimum: 0 at x = (1, 1, ..., 1)
+function f = rosenbrock_function(x)
+    f = sum(100 * (x(2:end) - x(1:end-1).^2).^2 + (x(1:end-1) - 1).^2);
+end
+
+% --- 3. Step Function (Unimodal) ---
+% Global minimum: 0 at x = (0, 0, ..., 0)
+function f = step_function(x)
+    f = sum(floor(x + 0.5).^2);
+end
+
+% --- 4. Quartic Function (Unimodal) ---
+% Global minimum: 0 at x = (0, 0, ..., 0)
+function f = quartic_function(x)
+    D = length(x);
+    f = sum((1:D) .* (x.^4)) + rand(); % rand() adds noise
+end
+
+% --- 5. Schwefel 2.21 Function (Unimodal) ---
+% Global minimum: 0 at x = (0, 0, ..., 0)
+function f = schwefel_2_21_function(x)
+    f = max(abs(x));
+end
+
+% --- 6. Rastrigin Function (Multimodal) ---
+% Global minimum: 0 at x = (0, 0, ..., 0)
+function f = rastrigin_function(x)
+    D = length(x);
+    f = 10 * D + sum(x.^2 - 10 * cos(2 * pi * x));
+end
+
+% --- 7. Ackley Function (Multimodal) ---
+% Global minimum: 0 at x = (0, 0, ..., 0)
+function f = ackley_function(x)
+    D = length(x);
+    sum1 = sum(x.^2);
+    sum2 = sum(cos(2 * pi * x));
+    f = -20 * exp(-0.2 * sqrt(sum1 / D)) - exp(sum2 / D) + 20 + exp(1);
+end
+
+% --- 8. Griewank Function (Multimodal) ---
+% Global minimum: 0 at x = (0, 0, ..., 0)
+function f = griewank_function(x)
+    D = length(x);
+    sum_term = sum(x.^2 / 4000);
+    prod_term = prod(cos(x ./ sqrt(1:D)));
+    f = sum_term - prod_term + 1;
+end
+
+% --- 9. Schwefel Function (Multimodal) ---
+% Global minimum: 0 at x = (420.9687, ..., 420.9687)
+function f = schwefel_function(x)
+    D = length(x);
+    f = 418.9829 * D - sum(x .* sin(sqrt(abs(x))));
+end
+
+% --- 10. Levy Function (Multimodal) ---
+% Global minimum: 0 at x = (1, 1, ..., 1)
+function f = levy_function(x)
+    D = length(x);
+    w = 1 + (x - 1) / 4;
+    term1 = sin(pi * w(1)).^2;
+    term_middle = sum((w(1:D-1) - 1).^2 .* (1 + 10 * sin(pi * w(1:D-1) + 1).^2));
+    term_last = (w(D) - 1).^2 * (1 + sin(2 * pi * w(D)).^2);
+    f = term1 + term_middle + term_last;
+end
